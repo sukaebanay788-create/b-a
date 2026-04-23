@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Binance Order Book Depth 30%</title>
+  <!-- Встроенный фавикон (избавляет от ошибки 404) -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='90'>📊</text></svg>">
   <style>
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -21,6 +23,7 @@
       padding: 30px 40px;
       box-shadow: 0 8px 24px rgba(0,0,0,0.4);
       text-align: center;
+      max-width: 400px;
     }
     h1 {
       margin: 0 0 8px 0;
@@ -71,7 +74,19 @@
       display: inline-block;
     }
     .dot.disconnected { background: #f6465d; }
+    .dot.connecting { background: #f0b90b; }
     .error { color: #f6465d; margin-top: 10px; }
+    .debug {
+      margin-top: 15px;
+      font-size: 0.7rem;
+      color: #5e6673;
+      background: #14181c;
+      padding: 10px;
+      border-radius: 6px;
+      text-align: left;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
   </style>
 </head>
 <body>
@@ -102,15 +117,17 @@
       <span id="statusText">Подключение...</span>
     </div>
     <div id="errorMsg" class="error"></div>
+    <div id="debugInfo" class="debug"></div>
   </div>
 
   <script>
     (function() {
-      // ---------- НАСТРОЙКИ (можно менять) ----------
-      const SYMBOL = 'btcusdt';                  // торговая пара (нижний регистр)
-      const DEPTH_PERCENT = 30;                 // глубина в процентах от цены
-      const STREAM_URL = `wss://stream.binance.com:9443/ws/${SYMBOL}@depth@1000ms`;
-      // ---------------------------------------------
+      // ---------- НАСТРОЙКИ ----------
+      const SYMBOL = 'btcusdt';
+      const DEPTH_PERCENT = 30;
+      // Используем порт 443 (меньше проблем с сетью)
+      const STREAM_URL = `wss://stream.binance.com:443/ws/${SYMBOL}@depth@1000ms`;
+      // ------------------------------
 
       const symbolDisplay = document.getElementById('symbolDisplay');
       const bidVolumeEl = document.getElementById('bidVolume');
@@ -119,8 +136,15 @@
       const statusDot = document.getElementById('statusDot');
       const statusText = document.getElementById('statusText');
       const errorMsg = document.getElementById('errorMsg');
+      const debugInfo = document.getElementById('debugInfo');
 
       symbolDisplay.textContent = SYMBOL.toUpperCase();
+
+      function log(msg) {
+        const time = new Date().toLocaleTimeString();
+        debugInfo.textContent = `[${time}] ${msg}`;
+        console.log(msg);
+      }
 
       function formatVolume(vol) {
         if (vol === null || vol === undefined) return '—';
@@ -129,13 +153,14 @@
         return vol.toFixed(2);
       }
 
-      function setConnected(connected) {
-        if (connected) {
-          statusDot.className = 'dot';
-          statusText.textContent = 'Live';
-        } else {
-          statusDot.className = 'dot disconnected';
+      function setStatus(state) {
+        statusDot.className = 'dot ' + state; // connecting / disconnected / (none for connected)
+        if (state === 'connecting') {
+          statusText.textContent = 'Подключение...';
+        } else if (state === 'disconnected') {
           statusText.textContent = 'Отключено';
+        } else {
+          statusText.textContent = 'Live';
         }
       }
 
@@ -143,53 +168,50 @@
         errorMsg.textContent = text || '';
       }
 
-      // Главная функция обработки данных стакана
       function processOrderBook(data) {
         try {
-          const bids = data.bids || [];
-          const asks = data.asks || [];
+          if (!data || !data.bids || !data.asks) {
+            log('Некорректные данные: ' + JSON.stringify(data).slice(0, 100));
+            return;
+          }
+          const bids = data.bids;
+          const asks = data.asks;
 
           if (bids.length === 0 || asks.length === 0) {
             showError('Пустой стакан');
+            log('Пустой стакан');
             return;
           }
 
-          // Лучшие цены
           const bestBid = parseFloat(bids[0][0]);
           const bestAsk = parseFloat(asks[0][0]);
+          const bidThreshold = bestBid * (1 - DEPTH_PERCENT / 100);
+          const askThreshold = bestAsk * (1 + DEPTH_PERCENT / 100);
 
-          // Границы для 30% глубины
-          const bidThreshold = bestBid * (1 - DEPTH_PERCENT / 100); // ниже bestBid
-          const askThreshold = bestAsk * (1 + DEPTH_PERCENT / 100); // выше bestAsk
-
-          // Суммируем объёмы bid в диапазоне [bidThreshold, bestBid]
           let bidVolume = 0;
           for (const [price, qty] of bids) {
             const p = parseFloat(price);
             if (p >= bidThreshold && p <= bestBid) {
               bidVolume += parseFloat(qty);
             } else if (p < bidThreshold) {
-              break; // дальше цены ещё ниже, не входят
+              break;
             }
           }
 
-          // Суммируем объёмы ask в диапазоне [bestAsk, askThreshold]
           let askVolume = 0;
           for (const [price, qty] of asks) {
             const p = parseFloat(price);
             if (p >= bestAsk && p <= askThreshold) {
               askVolume += parseFloat(qty);
             } else if (p > askThreshold) {
-              break; // дальше цены выше, не входят
+              break;
             }
           }
 
-          // Обновляем интерфейс
           bidVolumeEl.textContent = formatVolume(bidVolume);
           askVolumeEl.textContent = formatVolume(askVolume);
           const imbalance = bidVolume - askVolume;
           imbalanceEl.textContent = formatVolume(imbalance);
-          // Можно окрасить imbalance: если положительный — зелёный, отрицательный — красный
           if (imbalance > 0) {
             imbalanceEl.style.color = '#2ebd85';
           } else if (imbalance < 0) {
@@ -199,10 +221,11 @@
           }
 
           showError('');
-          setConnected(true);
+          setStatus(''); // connected
+          log('Данные обновлены');
         } catch (e) {
-          showError('Ошибка обработки данных');
-          console.error(e);
+          showError('Ошибка обработки данных: ' + e.message);
+          log('Ошибка: ' + e.message);
         }
       }
 
@@ -211,31 +234,35 @@
         if (ws) {
           ws.close();
         }
-        setConnected(false);
+        setStatus('connecting');
         showError('');
+        log('Подключение к ' + STREAM_URL);
+
         ws = new WebSocket(STREAM_URL);
 
         ws.onopen = () => {
-          console.log('WebSocket connected');
-          // Данные придут в первом сообщении
+          log('Соединение установлено, ждём данные...');
         };
 
         ws.onmessage = (event) => {
-          const msg = JSON.parse(event.data);
-          if (msg.bids && msg.asks) {
+          try {
+            const msg = JSON.parse(event.data);
             processOrderBook(msg);
+          } catch (err) {
+            log('Ошибка JSON: ' + err.message);
           }
         };
 
         ws.onerror = (err) => {
+          log('Ошибка WebSocket');
           console.error('WebSocket error', err);
-          showError('Ошибка соединения');
-          setConnected(false);
+          showError('Ошибка соединения с Binance');
+          setStatus('disconnected');
         };
 
         ws.onclose = (event) => {
-          console.log('WebSocket closed, reconnect in 3s', event.reason);
-          setConnected(false);
+          log('Соединение закрыто (код ' + event.code + ', причина: ' + (event.reason || 'нет') + '). Переподключение через 3с...');
+          setStatus('disconnected');
           ws = null;
           setTimeout(connect, 3000);
         };
