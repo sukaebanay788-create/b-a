@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Binance Order Book Depth 30%</title>
-  <!-- Встроенный фавикон (избавляет от ошибки 404) -->
+  <!-- Встроенный favicon, чтобы не было ошибки 404 -->
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='90'>📊</text></svg>">
   <style>
     body {
@@ -123,9 +123,9 @@
   <script>
     (function() {
       // ---------- НАСТРОЙКИ ----------
-      const SYMBOL = 'btcusdt';
-      const DEPTH_PERCENT = 30;
-      // Используем порт 443 (меньше проблем с сетью)
+      const SYMBOL = 'btcusdt';                // торговая пара (нижний регистр)
+      const DEPTH_PERCENT = 30;                // глубина в процентах от лучшей цены
+      // Поток снимков стакана раз в секунду (полные bids/asks)
       const STREAM_URL = `wss://stream.binance.com:443/ws/${SYMBOL}@depth@1000ms`;
       // ------------------------------
 
@@ -154,7 +154,7 @@
       }
 
       function setStatus(state) {
-        statusDot.className = 'dot ' + state; // connecting / disconnected / (none for connected)
+        statusDot.className = 'dot ' + state; // connecting / disconnected / (empty for connected)
         if (state === 'connecting') {
           statusText.textContent = 'Подключение...';
         } else if (state === 'disconnected') {
@@ -168,12 +168,14 @@
         errorMsg.textContent = text || '';
       }
 
+      // Обработка полного снимка стакана (bids/asks)
       function processOrderBook(data) {
         try {
           if (!data || !data.bids || !data.asks) {
-            log('Некорректные данные: ' + JSON.stringify(data).slice(0, 100));
+            log('Некорректные данные (ожидались bids/asks): ' + JSON.stringify(data).slice(0, 100));
             return;
           }
+
           const bids = data.bids;
           const asks = data.asks;
 
@@ -185,6 +187,8 @@
 
           const bestBid = parseFloat(bids[0][0]);
           const bestAsk = parseFloat(asks[0][0]);
+
+          // Границы диапазона ±30%
           const bidThreshold = bestBid * (1 - DEPTH_PERCENT / 100);
           const askThreshold = bestAsk * (1 + DEPTH_PERCENT / 100);
 
@@ -194,7 +198,7 @@
             if (p >= bidThreshold && p <= bestBid) {
               bidVolume += parseFloat(qty);
             } else if (p < bidThreshold) {
-              break;
+              break; // дальше цены ещё ниже, не входят
             }
           }
 
@@ -204,14 +208,16 @@
             if (p >= bestAsk && p <= askThreshold) {
               askVolume += parseFloat(qty);
             } else if (p > askThreshold) {
-              break;
+              break; // дальше цены выше, не входят
             }
           }
 
+          // Обновляем UI
           bidVolumeEl.textContent = formatVolume(bidVolume);
           askVolumeEl.textContent = formatVolume(askVolume);
           const imbalance = bidVolume - askVolume;
           imbalanceEl.textContent = formatVolume(imbalance);
+
           if (imbalance > 0) {
             imbalanceEl.style.color = '#2ebd85';
           } else if (imbalance < 0) {
@@ -222,7 +228,7 @@
 
           showError('');
           setStatus(''); // connected
-          log('Данные обновлены');
+          log('Данные обновлены успешно');
         } catch (e) {
           showError('Ошибка обработки данных: ' + e.message);
           log('Ошибка: ' + e.message);
@@ -241,7 +247,7 @@
         ws = new WebSocket(STREAM_URL);
 
         ws.onopen = () => {
-          log('Соединение установлено, ждём данные...');
+          log('Соединение установлено, ожидание данных...');
         };
 
         ws.onmessage = (event) => {
@@ -249,7 +255,7 @@
             const msg = JSON.parse(event.data);
             processOrderBook(msg);
           } catch (err) {
-            log('Ошибка JSON: ' + err.message);
+            log('Ошибка парсинга JSON: ' + err.message);
           }
         };
 
