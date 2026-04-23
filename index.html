@@ -3,310 +3,392 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Binance Order Book Depth 30% (USDT) - 5s</title>
+  <title>Binance Spot Order Book Depth 30% (Polling + History Chart)</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='90'>📊</text></svg>">
   <style>
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #0b0e11;
-      color: #eaecef;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      min-height: 100vh;
-      margin: 0;
+      background: #0b0e11; color: #eaecef;
+      display: flex; justify-content: center; align-items: center;
+      min-height: 100vh; margin: 0; padding: 20px;
     }
     .container {
-      background: #1e2329;
-      border-radius: 12px;
-      padding: 30px 40px;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
-      text-align: center;
-      max-width: 400px;
+      background: #1e2329; border-radius: 12px; padding: 20px 30px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.4); text-align: center;
+      max-width: 800px; width: 100%;
     }
-    h1 {
-      margin: 0 0 8px 0;
-      font-size: 1.5rem;
-      color: #f0b90b;
+    h1 { margin: 0 0 8px 0; font-size: 1.5rem; color: #f0b90b; }
+    .symbol { font-size: 1.2rem; color: #848e9c; margin-bottom: 15px; }
+    .table { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px 20px; margin-top: 10px; }
+    .metric { text-align: center; }
+    .metric .label { font-size: 0.8rem; color: #848e9c; margin-bottom: 2px; }
+    .metric .value { font-size: 1.8rem; font-weight: 600; }
+    .bid .value { color: #2ebd85; } .ask .value { color: #f6465d; } .diff .value { color: #eaecef; }
+    .status { margin-top: 15px; font-size: 0.8rem; color: #848e9c; display: flex; align-items: center; justify-content: center; gap: 6px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #2ebd85; display: inline-block; }
+    .dot.disconnected { background: #f6465d; } .dot.connecting { background: #f0b90b; }
+    .error { color: #f6465d; margin-top: 8px; }
+    .chart-container {
+      margin-top: 20px; position: relative;
+      background: #14181c; border-radius: 8px; padding: 10px;
     }
-    .symbol {
-      font-size: 1.2rem;
-      color: #848e9c;
-      margin-bottom: 20px;
+    canvas { display: block; width: 100%; }
+    .scroll-bar {
+      margin-top: 5px; height: 13px; background: #2a2e35; border-radius: 6px;
+      position: relative; cursor: pointer; user-select: none;
     }
-    .table {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 12px 30px;
-      margin-top: 10px;
-    }
-    .metric {
-      text-align: left;
-    }
-    .metric .label {
-      font-size: 0.85rem;
-      color: #848e9c;
-      margin-bottom: 4px;
-    }
-    .metric .value {
-      font-size: 1.8rem;
-      font-weight: 600;
-      letter-spacing: 0.5px;
-    }
-    .bid .value { color: #2ebd85; }
-    .ask .value { color: #f6465d; }
-    .diff .value { color: #eaecef; }
-    .status {
-      margin-top: 18px;
-      font-size: 0.8rem;
-      color: #848e9c;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-    }
-    .dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: #2ebd85;
-      display: inline-block;
-    }
-    .dot.disconnected { background: #f6465d; }
-    .dot.connecting { background: #f0b90b; }
-    .error { color: #f6465d; margin-top: 10px; }
-    .debug {
-      margin-top: 15px;
-      font-size: 0.7rem;
-      color: #5e6673;
-      background: #14181c;
-      padding: 10px;
-      border-radius: 6px;
-      text-align: left;
-      white-space: pre-wrap;
-      word-break: break-all;
+    .scroll-thumb {
+      height: 100%; background: #5e6673; border-radius: 6px;
+      position: absolute; top: 0; left: 0;
     }
   </style>
 </head>
 <body>
   <div class="container">
-    <h1>📊 Order Book Depth</h1>
+    <h1>📊 Spot Order Book (History)</h1>
     <div class="symbol" id="symbolDisplay">BTCUSDT</div>
 
     <div class="table">
-      <div class="metric bid">
-        <div class="label">Bid Volume (30% depth) USDT</div>
-        <div class="value" id="bidVolume">—</div>
-      </div>
-      <div class="metric ask">
-        <div class="label">Ask Volume (30% depth) USDT</div>
-        <div class="value" id="askVolume">—</div>
-      </div>
-    </div>
-    <div class="table" style="margin-top: 0;">
-      <div class="metric diff">
-        <div class="label">Imbalance (Bid - Ask) USDT</div>
-        <div class="value" id="imbalance">—</div>
-      </div>
-      <div class="metric" style="visibility: hidden;"></div>
+      <div class="metric bid"><div class="label">Bid Vol (30%)</div><div class="value" id="bidVolume">—</div></div>
+      <div class="metric ask"><div class="label">Ask Vol (30%)</div><div class="value" id="askVolume">—</div></div>
+      <div class="metric diff"><div class="label">Imbalance</div><div class="value" id="imbalance">—</div></div>
     </div>
 
-    <div class="status" id="status">
-      <span class="dot" id="statusDot"></span>
-      <span id="statusText">Подключение...</span>
-    </div>
+    <div class="status"><span class="dot" id="statusDot"></span><span id="statusText">Подключение...</span></div>
     <div id="errorMsg" class="error"></div>
-    <div id="debugInfo" class="debug"></div>
+
+    <div class="chart-container">
+      <canvas id="historyChart" width="700" height="250"></canvas>
+      <div class="scroll-bar" id="scrollBar">
+        <div class="scroll-thumb" id="scrollThumb" style="width: 100%;"></div>
+      </div>
+    </div>
+    <div id="debugInfo" style="font-size:0.65rem; color:#5e6673; margin-top:8px;"></div>
   </div>
 
   <script>
     (function() {
+      // ---------- НАСТРОЙКИ ----------
       const SYMBOL = 'btcusdt';
       const DEPTH_PERCENT = 30;
-      const REST_SNAPSHOT_URL = `https://api.binance.com/api/v3/depth?symbol=${SYMBOL.toUpperCase()}&limit=1000`;
-      const WS_DEPTH_STREAM = `wss://stream.binance.com:443/ws/${SYMBOL}@depth@100ms`;
+      const POLL_INTERVAL = 5000;        // опрос REST каждые 5 сек
+      const HISTORY_INTERVAL = 60000;    // запись в историю раз в минуту
+      const MAX_HISTORY_POINTS = 1440;   // хранить 24 часа (1440 минут)
+      const CHART_WIDTH = 700;
+      const CHART_HEIGHT = 250;
+      const VISIBLE_MINUTES = 60;        // показывать последние 60 минут на графике
 
-      // Троттлинг: минимальный интервал между обновлениями UI (в миллисекундах)
-      const MIN_UPDATE_INTERVAL = 5000; // 5 секунд
+      const REST_URL = `https://api.binance.com/api/v3/depth?symbol=${SYMBOL.toUpperCase()}&limit=1000`;
 
-      const symbolDisplay = document.getElementById('symbolDisplay');
-      const bidVolumeEl = document.getElementById('bidVolume');
-      const askVolumeEl = document.getElementById('askVolume');
-      const imbalanceEl = document.getElementById('imbalance');
+      // DOM элементы
+      const bidVolEl = document.getElementById('bidVolume');
+      const askVolEl = document.getElementById('askVolume');
+      const imbEl = document.getElementById('imbalance');
       const statusDot = document.getElementById('statusDot');
       const statusText = document.getElementById('statusText');
-      const errorMsg = document.getElementById('errorMsg');
-      const debugInfo = document.getElementById('debugInfo');
-
+      const errorEl = document.getElementById('errorMsg');
+      const debugEl = document.getElementById('debugInfo');
+      const symbolDisplay = document.getElementById('symbolDisplay');
       symbolDisplay.textContent = SYMBOL.toUpperCase();
 
-      let currentBids = new Map(); // price -> quantity (BTC)
-      let currentAsks = new Map();
-      let lastUpdateId = null;
+      const canvas = document.getElementById('historyChart');
+      const ctx = canvas.getContext('2d');
 
-      let lastUiUpdate = 0; // timestamp последнего обновления UI
+      // IndexedDB
+      let db = null;
+      const DB_NAME = 'BinanceSpotHistory';
+      const DB_VERSION = 1;
+      const STORE_NAME = 'snapshots';
+
+      function openDB() {
+        return new Promise((resolve, reject) => {
+          const request = indexedDB.open(DB_NAME, DB_VERSION);
+          request.onupgradeneeded = (event) => {
+            const db = event.target.result;
+            if (!db.objectStoreNames.contains(STORE_NAME)) {
+              const store = db.createObjectStore(STORE_NAME, { keyPath: 'timestamp' });
+              store.createIndex('timestamp_idx', 'timestamp', { unique: true });
+            }
+          };
+          request.onsuccess = (event) => {
+            db = event.target.result;
+            resolve(db);
+          };
+          request.onerror = (event) => {
+            reject(event.target.error);
+          };
+        });
+      }
+
+      function saveSnapshot(snapshot) {
+        return new Promise((resolve, reject) => {
+          if (!db) return reject('DB not open');
+          const tx = db.transaction([STORE_NAME], 'readwrite');
+          const store = tx.objectStore(STORE_NAME);
+          store.put(snapshot);
+          tx.oncomplete = () => resolve();
+          tx.onerror = (event) => reject(event.target.error);
+        });
+      }
+
+      async function loadHistory() {
+        return new Promise((resolve, reject) => {
+          if (!db) return reject('DB not open');
+          const tx = db.transaction([STORE_NAME], 'readonly');
+          const store = tx.objectStore(STORE_NAME);
+          const index = store.index('timestamp_idx');
+          const range = IDBKeyRange.lowerBound(Date.now() - MAX_HISTORY_POINTS * 60000);
+          const request = index.getAll(range);
+          request.onsuccess = () => {
+            const data = request.result.sort((a, b) => a.timestamp - b.timestamp);
+            resolve(data);
+          };
+          request.onerror = (event) => reject(event.target.error);
+        });
+      }
+
+      async function pruneOldData() {
+        if (!db) return;
+        const tx = db.transaction([STORE_NAME], 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        const index = store.index('timestamp_idx');
+        const range = IDBKeyRange.upperBound(Date.now() - MAX_HISTORY_POINTS * 60000);
+        const request = index.openCursor(range);
+        request.onsuccess = (event) => {
+          const cursor = event.target.result;
+          if (cursor) {
+            cursor.delete();
+            cursor.continue();
+          }
+        };
+      }
+
+      // Глобальные переменные для графика
+      let historyData = []; // массив объектов { timestamp, bidVolume, askVolume, imbalance }
+      let viewOffset = 0;   // смещение окна влево (в точках)
+      let maxViewOffset = 0;
 
       function log(msg) {
         const time = new Date().toLocaleTimeString();
-        debugInfo.textContent = `[${time}] ${msg}`;
+        debugEl.textContent = `[${time}] ${msg}`;
         console.log(msg);
       }
 
       function formatVolume(vol) {
-        if (vol === null || vol === undefined) return '—';
-        if (vol >= 1e6) return (vol / 1e6).toFixed(2) + 'M';
-        if (vol >= 1e3) return (vol / 1e3).toFixed(2) + 'K';
-        return vol.toFixed(2);
+        if (vol == null) return '—';
+        const absVol = Math.abs(vol);
+        const sign = vol < 0 ? '-' : '';
+        if (absVol >= 1e6) return sign + (absVol / 1e6).toFixed(2) + 'M';
+        if (absVol >= 1e3) return sign + (absVol / 1e3).toFixed(2) + 'K';
+        return sign + absVol.toFixed(2);
       }
 
-      function setStatus(state) {
-        statusDot.className = 'dot ' + state;
-        if (state === 'connecting') statusText.textContent = 'Подключение...';
-        else if (state === 'disconnected') statusText.textContent = 'Отключено';
-        else statusText.textContent = 'Live';
-      }
-
-      function showError(text) {
-        errorMsg.textContent = text || '';
-      }
-
-      // Обновление таблицы — теперь с проверкой интервала
-      function updateDisplay() {
-        const now = Date.now();
-        if (now - lastUiUpdate < MIN_UPDATE_INTERVAL) {
-          // Ещё не прошло 5 секунд — пропускаем отрисовку
-          return;
-        }
-        lastUiUpdate = now;
-
-        if (currentBids.size === 0 || currentAsks.size === 0) return;
-
-        const bestBid = Math.max(...currentBids.keys());
-        const bestAsk = Math.min(...currentAsks.keys());
-        const bidThreshold = bestBid * (1 - DEPTH_PERCENT / 100);
-        const askThreshold = bestAsk * (1 + DEPTH_PERCENT / 100);
-
-        let bidVolumeUSDT = 0;
-        for (const [price, qty] of currentBids) {
-          if (price >= bidThreshold && price <= bestBid) {
-            bidVolumeUSDT += price * qty;
-          }
-        }
-
-        let askVolumeUSDT = 0;
-        for (const [price, qty] of currentAsks) {
-          if (price >= bestAsk && price <= askThreshold) {
-            askVolumeUSDT += price * qty;
-          }
-        }
-
-        bidVolumeEl.textContent = '$' + formatVolume(bidVolumeUSDT);
-        askVolumeEl.textContent = '$' + formatVolume(askVolumeUSDT);
-        const imbalance = bidVolumeUSDT - askVolumeUSDT;
-        imbalanceEl.textContent = '$' + formatVolume(imbalance);
-        imbalanceEl.style.color = imbalance > 0 ? '#2ebd85' : (imbalance < 0 ? '#f6465d' : '#eaecef');
-
-        log('UI обновлён (throttled)');
-      }
-
-      // Загрузка снимка стакана через REST (сразу показывает данные, игнорируя троттлинг)
-      async function fetchSnapshot() {
+      // Основная функция опроса REST и записи в историю
+      async function fetchAndDisplay() {
         try {
-          log('Получение снимка стакана через REST API...');
-          const response = await fetch(REST_SNAPSHOT_URL);
+          const response = await fetch(REST_URL);
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
           const data = await response.json();
-          if (!data.bids || !data.asks) throw new Error('Некорректный формат снимка');
+          if (!data.bids || !data.asks) throw new Error('Нет bids/asks');
 
-          lastUpdateId = data.lastUpdateId;
-          currentBids.clear();
-          currentAsks.clear();
+          const bestBid = parseFloat(data.bids[0][0]);
+          const bestAsk = parseFloat(data.asks[0][0]);
+          const bidThresh = bestBid * (1 - DEPTH_PERCENT / 100);
+          const askThresh = bestAsk * (1 + DEPTH_PERCENT / 100);
 
-          data.bids.forEach(([price, qty]) => {
-            currentBids.set(parseFloat(price), parseFloat(qty));
-          });
-          data.asks.forEach(([price, qty]) => {
-            currentAsks.set(parseFloat(price), parseFloat(qty));
-          });
-
-          // Сразу показываем первый снимок, сбрасывая таймер троттлинга
-          lastUiUpdate = 0;
-          updateDisplay();
-          setStatus('');
-          log('Снимок стакана загружен. LastUpdateId: ' + lastUpdateId);
-          showError('');
-        } catch (e) {
-          showError('Ошибка загрузки снимка: ' + e.message);
-          log('Ошибка: ' + e.message);
-          setTimeout(fetchSnapshot, 5000);
-        }
-      }
-
-      // Применение дельта-обновлений WebSocket
-      function applyDepthUpdate(data) {
-        if (!lastUpdateId) return;
-        const U = data.U;
-        const u = data.u;
-        const b = data.b || [];
-        const a = data.a || [];
-
-        if (u < lastUpdateId) return;
-        if (U > lastUpdateId + 1) {
-          log('Обнаружена потеря данных. Ресинхронизация...');
-          fetchSnapshot();
-          return;
-        }
-
-        b.forEach(([price, qty]) => {
-          const p = parseFloat(price);
-          const q = parseFloat(qty);
-          q === 0 ? currentBids.delete(p) : currentBids.set(p, q);
-        });
-
-        a.forEach(([price, qty]) => {
-          const p = parseFloat(price);
-          const q = parseFloat(qty);
-          q === 0 ? currentAsks.delete(p) : currentAsks.set(p, q);
-        });
-
-        lastUpdateId = u;
-        // Попытка обновить UI (троттлинг сам решит, пора или нет)
-        updateDisplay();
-      }
-
-      // Инициализация WebSocket-соединений
-      function initWebSockets() {
-        const depthWs = new WebSocket(WS_DEPTH_STREAM);
-        depthWs.onmessage = (event) => {
-          try {
-            const msg = JSON.parse(event.data);
-            if (msg.e === 'depthUpdate') applyDepthUpdate(msg);
-          } catch (e) {
-            log('Ошибка обработки depthUpdate: ' + e.message);
+          let bidVol = 0, askVol = 0;
+          for (const [p, q] of data.bids) {
+            const price = parseFloat(p);
+            if (price >= bidThresh && price <= bestBid) bidVol += price * parseFloat(q);
+            else if (price < bidThresh) break;
           }
-        };
-        depthWs.onerror = () => {
-          log('Ошибка WebSocket depth');
-          setStatus('disconnected');
-        };
-        depthWs.onclose = () => {
-          log('Depth WebSocket закрыт. Переподключение...');
-          setStatus('disconnected');
-          setTimeout(initWebSockets, 3000);
-        };
+          for (const [p, q] of data.asks) {
+            const price = parseFloat(p);
+            if (price >= bestAsk && price <= askThresh) askVol += price * parseFloat(q);
+            else if (price > askThresh) break;
+          }
 
-        // Тикер (необязательный)
-        const tickerWs = new WebSocket(`wss://stream.binance.com:443/ws/${SYMBOL}@ticker`);
-        tickerWs.onmessage = (event) => {
-          try {
-            const msg = JSON.parse(event.data);
-            if (msg.e === '24hrTicker') { /* можно использовать */ }
-          } catch (e) {}
-        };
+          // Обновляем таблицу (UI)
+          bidVolEl.textContent = '$' + formatVolume(bidVol);
+          askVolEl.textContent = '$' + formatVolume(askVol);
+          const imb = bidVol - askVol;
+          imbEl.textContent = '$' + formatVolume(imb);
+          imbEl.style.color = imb > 0 ? '#2ebd85' : (imb < 0 ? '#f6465d' : '#eaecef');
+
+          statusDot.className = 'dot';
+          statusText.textContent = 'Live';
+          errorEl.textContent = '';
+
+          // Проверяем, пора ли записывать в историю (раз в минуту)
+          const now = Date.now();
+          const lastPoint = historyData.length > 0 ? historyData[historyData.length - 1] : null;
+          if (!lastPoint || (now - lastPoint.timestamp) >= HISTORY_INTERVAL) {
+            const snapshot = {
+              timestamp: now,
+              bidVolume: bidVol,
+              askVolume: askVol,
+              imbalance: imb
+            };
+            historyData.push(snapshot);
+            await saveSnapshot(snapshot);
+            log('Точка добавлена в историю');
+            // Если данных больше MAX_HISTORY_POINTS, удаляем старые
+            if (historyData.length > MAX_HISTORY_POINTS) {
+              historyData.shift();
+              await pruneOldData();
+            }
+            drawChart();
+          }
+
+        } catch (e) {
+          errorEl.textContent = 'Ошибка: ' + e.message;
+          log('Ошибка: ' + e.message);
+          statusDot.className = 'dot disconnected';
+          statusText.textContent = 'Ошибка';
+        }
+        setTimeout(fetchAndDisplay, POLL_INTERVAL);
       }
 
-      fetchSnapshot();
-      initWebSockets();
-      setStatus('connecting');
+      // Рисование графика на Canvas
+      function drawChart() {
+        if (historyData.length < 2) return;
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Определяем видимое окно
+        const totalPoints = historyData.length;
+        maxViewOffset = Math.max(0, totalPoints - VISIBLE_MINUTES);
+        const startIndex = Math.max(0, totalPoints - VISIBLE_MINUTES - viewOffset);
+        const endIndex = totalPoints - viewOffset;
+        const visibleData = historyData.slice(startIndex, endIndex);
+
+        if (visibleData.length < 2) return;
+
+        // Находим min/max для масштабирования по Y
+        let minVal = Infinity, maxVal = -Infinity;
+        visibleData.forEach(p => {
+          const vals = [p.bidVolume, p.askVolume, p.imbalance];
+          vals.forEach(v => {
+            if (v < minVal) minVal = v;
+            if (v > maxVal) maxVal = v;
+          });
+        });
+        if (minVal === maxVal) {
+          minVal -= 1000;
+          maxVal += 1000;
+        }
+
+        const padding = { top: 20, right: 20, bottom: 30, left: 60 };
+        const plotWidth = canvas.width - padding.left - padding.right;
+        const plotHeight = canvas.height - padding.top - padding.bottom;
+
+        function xForIndex(i) {
+          return padding.left + (i / (visibleData.length - 1)) * plotWidth;
+        }
+        function yForValue(v) {
+          const ratio = (v - minVal) / (maxVal - minVal);
+          return padding.top + plotHeight - ratio * plotHeight;
+        }
+
+        // Сетка и оси
+        ctx.fillStyle = '#0b0e11';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.strokeStyle = '#2a2e35';
+        ctx.lineWidth = 0.5;
+        for (let i = 0; i <= 5; i++) {
+          const y = padding.top + (i / 5) * plotHeight;
+          ctx.beginPath();
+          ctx.moveTo(padding.left, y);
+          ctx.lineTo(canvas.width - padding.right, y);
+          ctx.stroke();
+        }
+
+        // Линии
+        function drawLine(key, color) {
+          ctx.beginPath();
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 1.5;
+          let first = true;
+          visibleData.forEach((p, i) => {
+            const x = xForIndex(i);
+            const y = yForValue(p[key]);
+            if (first) { ctx.moveTo(x, y); first = false; }
+            else ctx.lineTo(x, y);
+          });
+          ctx.stroke();
+        }
+
+        drawLine('bidVolume', '#2ebd85');
+        drawLine('askVolume', '#f6465d');
+        drawLine('imbalance', '#eaecef');
+
+        // Легенда
+        ctx.font = '10px sans-serif';
+        ctx.fillStyle = '#2ebd85';
+        ctx.fillText('Bid', padding.left, 15);
+        ctx.fillStyle = '#f6465d';
+        ctx.fillText('Ask', padding.left + 40, 15);
+        ctx.fillStyle = '#eaecef';
+        ctx.fillText('Imb', padding.left + 80, 15);
+
+        // Полоска прокрутки
+        const scrollBar = document.getElementById('scrollBar');
+        const thumb = document.getElementById('scrollThumb');
+        if (totalPoints > VISIBLE_MINUTES) {
+          const thumbWidth = Math.max(20, (VISIBLE_MINUTES / totalPoints) * scrollBar.clientWidth);
+          thumb.style.width = thumbWidth + 'px';
+          const leftPos = (viewOffset / maxViewOffset) * (scrollBar.clientWidth - thumbWidth);
+          thumb.style.left = leftPos + 'px';
+        } else {
+          thumb.style.width = '100%';
+          thumb.style.left = '0px';
+        }
+      }
+
+      // Обработчик скроллбара
+      (function setupScrollBar() {
+        const scrollBar = document.getElementById('scrollBar');
+        const thumb = document.getElementById('scrollThumb');
+        let dragging = false;
+
+        function moveThumb(clientX) {
+          const rect = scrollBar.getBoundingClientRect();
+          const thumbWidth = thumb.clientWidth;
+          let left = clientX - rect.left - thumbWidth / 2;
+          left = Math.max(0, Math.min(left, rect.width - thumbWidth));
+          thumb.style.left = left + 'px';
+          viewOffset = Math.round((left / (rect.width - thumbWidth)) * maxViewOffset);
+          drawChart();
+        }
+
+        thumb.addEventListener('mousedown', (e) => {
+          dragging = true;
+          e.preventDefault();
+        });
+        document.addEventListener('mousemove', (e) => {
+          if (dragging) moveThumb(e.clientX);
+        });
+        document.addEventListener('mouseup', () => { dragging = false; });
+        scrollBar.addEventListener('click', (e) => {
+          if (e.target === thumb) return;
+          moveThumb(e.clientX);
+        });
+      })();
+
+      // Инициализация
+      (async function init() {
+        try {
+          await openDB();
+          log('IndexedDB открыта');
+          historyData = await loadHistory();
+          log(`Загружено ${historyData.length} точек из истории`);
+          drawChart();
+        } catch (e) {
+          log('Ошибка IndexedDB: ' + e.message);
+        }
+        fetchAndDisplay();
+      })();
+
     })();
   </script>
 </body>
