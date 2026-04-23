@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Binance Order Book Depth 30%</title>
+  <title>Binance Order Book Depth 30% (USDT) - 5s</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='90'>📊</text></svg>">
   <style>
     body {
@@ -95,17 +95,17 @@
 
     <div class="table">
       <div class="metric bid">
-        <div class="label">Bid Volume (30% depth)</div>
+        <div class="label">Bid Volume (30% depth) USDT</div>
         <div class="value" id="bidVolume">—</div>
       </div>
       <div class="metric ask">
-        <div class="label">Ask Volume (30% depth)</div>
+        <div class="label">Ask Volume (30% depth) USDT</div>
         <div class="value" id="askVolume">—</div>
       </div>
     </div>
     <div class="table" style="margin-top: 0;">
       <div class="metric diff">
-        <div class="label">Imbalance (Bid - Ask)</div>
+        <div class="label">Imbalance (Bid - Ask) USDT</div>
         <div class="value" id="imbalance">—</div>
       </div>
       <div class="metric" style="visibility: hidden;"></div>
@@ -121,15 +121,13 @@
 
   <script>
     (function() {
-      // ---------- НАСТРОЙКИ ----------
       const SYMBOL = 'btcusdt';
       const DEPTH_PERCENT = 30;
       const REST_SNAPSHOT_URL = `https://api.binance.com/api/v3/depth?symbol=${SYMBOL.toUpperCase()}&limit=1000`;
-      // Поток мгновенных обновлений (дельта)
       const WS_DEPTH_STREAM = `wss://stream.binance.com:443/ws/${SYMBOL}@depth@100ms`;
-      // Поток лучшей цены для мгновенного отображения
-      const WS_TICKER_STREAM = `wss://stream.binance.com:443/ws/${SYMBOL}@ticker`;
-      // ---------------------------------
+
+      // Троттлинг: минимальный интервал между обновлениями UI (в миллисекундах)
+      const MIN_UPDATE_INTERVAL = 5000; // 5 секунд
 
       const symbolDisplay = document.getElementById('symbolDisplay');
       const bidVolumeEl = document.getElementById('bidVolume');
@@ -142,10 +140,11 @@
 
       symbolDisplay.textContent = SYMBOL.toUpperCase();
 
-      // Текущее состояние стакана
-      let currentBids = new Map(); // price -> quantity
+      let currentBids = new Map(); // price -> quantity (BTC)
       let currentAsks = new Map();
       let lastUpdateId = null;
+
+      let lastUiUpdate = 0; // timestamp последнего обновления UI
 
       function log(msg) {
         const time = new Date().toLocaleTimeString();
@@ -162,75 +161,75 @@
 
       function setStatus(state) {
         statusDot.className = 'dot ' + state;
-        if (state === 'connecting') {
-          statusText.textContent = 'Подключение...';
-        } else if (state === 'disconnected') {
-          statusText.textContent = 'Отключено';
-        } else {
-          statusText.textContent = 'Live';
-        }
+        if (state === 'connecting') statusText.textContent = 'Подключение...';
+        else if (state === 'disconnected') statusText.textContent = 'Отключено';
+        else statusText.textContent = 'Live';
       }
 
       function showError(text) {
         errorMsg.textContent = text || '';
       }
 
-      // Обновление таблицы на основе данных стакана
+      // Обновление таблицы — теперь с проверкой интервала
       function updateDisplay() {
+        const now = Date.now();
+        if (now - lastUiUpdate < MIN_UPDATE_INTERVAL) {
+          // Ещё не прошло 5 секунд — пропускаем отрисовку
+          return;
+        }
+        lastUiUpdate = now;
+
         if (currentBids.size === 0 || currentAsks.size === 0) return;
 
         const bestBid = Math.max(...currentBids.keys());
         const bestAsk = Math.min(...currentAsks.keys());
-
         const bidThreshold = bestBid * (1 - DEPTH_PERCENT / 100);
         const askThreshold = bestAsk * (1 + DEPTH_PERCENT / 100);
 
-        let bidVolume = 0;
+        let bidVolumeUSDT = 0;
         for (const [price, qty] of currentBids) {
           if (price >= bidThreshold && price <= bestBid) {
-            bidVolume += qty;
+            bidVolumeUSDT += price * qty;
           }
         }
 
-        let askVolume = 0;
+        let askVolumeUSDT = 0;
         for (const [price, qty] of currentAsks) {
           if (price >= bestAsk && price <= askThreshold) {
-            askVolume += qty;
+            askVolumeUSDT += price * qty;
           }
         }
 
-        bidVolumeEl.textContent = formatVolume(bidVolume);
-        askVolumeEl.textContent = formatVolume(askVolume);
-        const imbalance = bidVolume - askVolume;
-        imbalanceEl.textContent = formatVolume(imbalance);
+        bidVolumeEl.textContent = '$' + formatVolume(bidVolumeUSDT);
+        askVolumeEl.textContent = '$' + formatVolume(askVolumeUSDT);
+        const imbalance = bidVolumeUSDT - askVolumeUSDT;
+        imbalanceEl.textContent = '$' + formatVolume(imbalance);
         imbalanceEl.style.color = imbalance > 0 ? '#2ebd85' : (imbalance < 0 ? '#f6465d' : '#eaecef');
+
+        log('UI обновлён (throttled)');
       }
 
-      // Получение полного снимка стакана через REST API
+      // Загрузка снимка стакана через REST (сразу показывает данные, игнорируя троттлинг)
       async function fetchSnapshot() {
         try {
           log('Получение снимка стакана через REST API...');
           const response = await fetch(REST_SNAPSHOT_URL);
           const data = await response.json();
-          
-          if (!data.bids || !data.asks) {
-            throw new Error('Некорректный формат снимка');
-          }
+          if (!data.bids || !data.asks) throw new Error('Некорректный формат снимка');
 
           lastUpdateId = data.lastUpdateId;
-          
-          // Очищаем и заполняем стакан
           currentBids.clear();
           currentAsks.clear();
-          
+
           data.bids.forEach(([price, qty]) => {
             currentBids.set(parseFloat(price), parseFloat(qty));
           });
-          
           data.asks.forEach(([price, qty]) => {
             currentAsks.set(parseFloat(price), parseFloat(qty));
           });
 
+          // Сразу показываем первый снимок, сбрасывая таймер троттлинга
+          lastUiUpdate = 0;
           updateDisplay();
           setStatus('');
           log('Снимок стакана загружен. LastUpdateId: ' + lastUpdateId);
@@ -238,102 +237,73 @@
         } catch (e) {
           showError('Ошибка загрузки снимка: ' + e.message);
           log('Ошибка: ' + e.message);
-          // Повторная попытка через 5 секунд
           setTimeout(fetchSnapshot, 5000);
         }
       }
 
-      // Применение дельта-обновлений из WebSocket
+      // Применение дельта-обновлений WebSocket
       function applyDepthUpdate(data) {
-        if (!lastUpdateId) return; // Ещё нет снимка
+        if (!lastUpdateId) return;
+        const U = data.U;
+        const u = data.u;
+        const b = data.b || [];
+        const a = data.a || [];
 
-        const U = data.U; // First update ID
-        const u = data.u; // Final update ID
-        const b = data.b || []; // Bids updates
-        const a = data.a || []; // Asks updates
-
-        // Проверка на синхронизацию
-        if (u < lastUpdateId) {
-          // Устаревшее обновление, пропускаем
-          return;
-        }
-
+        if (u < lastUpdateId) return;
         if (U > lastUpdateId + 1) {
-          // Потеря данных, нужна ресинхронизация
           log('Обнаружена потеря данных. Ресинхронизация...');
           fetchSnapshot();
           return;
         }
 
-        // Применяем обновления
         b.forEach(([price, qty]) => {
           const p = parseFloat(price);
           const q = parseFloat(qty);
-          if (q === 0) {
-            currentBids.delete(p);
-          } else {
-            currentBids.set(p, q);
-          }
+          q === 0 ? currentBids.delete(p) : currentBids.set(p, q);
         });
 
         a.forEach(([price, qty]) => {
           const p = parseFloat(price);
           const q = parseFloat(qty);
-          if (q === 0) {
-            currentAsks.delete(p);
-          } else {
-            currentAsks.set(p, q);
-          }
+          q === 0 ? currentAsks.delete(p) : currentAsks.set(p, q);
         });
 
         lastUpdateId = u;
+        // Попытка обновить UI (троттлинг сам решит, пора или нет)
         updateDisplay();
       }
 
-      // Инициализация WebSocket соединений
+      // Инициализация WebSocket-соединений
       function initWebSockets() {
-        // Поток обновлений стакана (дельта)
         const depthWs = new WebSocket(WS_DEPTH_STREAM);
-        
         depthWs.onmessage = (event) => {
           try {
             const msg = JSON.parse(event.data);
-            if (msg.e === 'depthUpdate') {
-              applyDepthUpdate(msg);
-            }
+            if (msg.e === 'depthUpdate') applyDepthUpdate(msg);
           } catch (e) {
             log('Ошибка обработки depthUpdate: ' + e.message);
           }
         };
-
         depthWs.onerror = () => {
           log('Ошибка WebSocket depth');
           setStatus('disconnected');
         };
-
         depthWs.onclose = () => {
           log('Depth WebSocket закрыт. Переподключение...');
           setStatus('disconnected');
           setTimeout(initWebSockets, 3000);
         };
 
-        // Дополнительный поток тикера для мгновенного отображения лучшей цены
-        const tickerWs = new WebSocket(WS_TICKER_STREAM);
-        
+        // Тикер (необязательный)
+        const tickerWs = new WebSocket(`wss://stream.binance.com:443/ws/${SYMBOL}@ticker`);
         tickerWs.onmessage = (event) => {
           try {
             const msg = JSON.parse(event.data);
-            if (msg.e === '24hrTicker') {
-              // Можно использовать для дополнительной информации
-              // Например, отображать процент изменения
-            }
-          } catch (e) {
-            // Игнорируем ошибки парсинга тикера
-          }
+            if (msg.e === '24hrTicker') { /* можно использовать */ }
+          } catch (e) {}
         };
       }
 
-      // Запуск
       fetchSnapshot();
       initWebSockets();
       setStatus('connecting');
