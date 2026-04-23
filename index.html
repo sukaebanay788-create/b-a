@@ -4,7 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Binance Order Book Depth 30%</title>
-  <!-- Встроенный favicon, чтобы не было ошибки 404 -->
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='90'>📊</text></svg>">
   <style>
     body {
@@ -123,11 +122,14 @@
   <script>
     (function() {
       // ---------- НАСТРОЙКИ ----------
-      const SYMBOL = 'btcusdt';                // торговая пара (нижний регистр)
-      const DEPTH_PERCENT = 30;                // глубина в процентах от лучшей цены
-      // Поток снимков стакана раз в секунду (полные bids/asks)
-      const STREAM_URL = `wss://stream.binance.com:443/ws/${SYMBOL}@depth@1000ms`;
-      // ------------------------------
+      const SYMBOL = 'btcusdt';
+      const DEPTH_PERCENT = 30;
+      const REST_SNAPSHOT_URL = `https://api.binance.com/api/v3/depth?symbol=${SYMBOL.toUpperCase()}&limit=1000`;
+      // Поток мгновенных обновлений (дельта)
+      const WS_DEPTH_STREAM = `wss://stream.binance.com:443/ws/${SYMBOL}@depth@100ms`;
+      // Поток лучшей цены для мгновенного отображения
+      const WS_TICKER_STREAM = `wss://stream.binance.com:443/ws/${SYMBOL}@ticker`;
+      // ---------------------------------
 
       const symbolDisplay = document.getElementById('symbolDisplay');
       const bidVolumeEl = document.getElementById('bidVolume');
@@ -139,6 +141,11 @@
       const debugInfo = document.getElementById('debugInfo');
 
       symbolDisplay.textContent = SYMBOL.toUpperCase();
+
+      // Текущее состояние стакана
+      let currentBids = new Map(); // price -> quantity
+      let currentAsks = new Map();
+      let lastUpdateId = null;
 
       function log(msg) {
         const time = new Date().toLocaleTimeString();
@@ -154,7 +161,7 @@
       }
 
       function setStatus(state) {
-        statusDot.className = 'dot ' + state; // connecting / disconnected / (empty for connected)
+        statusDot.className = 'dot ' + state;
         if (state === 'connecting') {
           statusText.textContent = 'Подключение...';
         } else if (state === 'disconnected') {
@@ -168,113 +175,168 @@
         errorMsg.textContent = text || '';
       }
 
-      // Обработка полного снимка стакана (bids/asks)
-      function processOrderBook(data) {
+      // Обновление таблицы на основе данных стакана
+      function updateDisplay() {
+        if (currentBids.size === 0 || currentAsks.size === 0) return;
+
+        const bestBid = Math.max(...currentBids.keys());
+        const bestAsk = Math.min(...currentAsks.keys());
+
+        const bidThreshold = bestBid * (1 - DEPTH_PERCENT / 100);
+        const askThreshold = bestAsk * (1 + DEPTH_PERCENT / 100);
+
+        let bidVolume = 0;
+        for (const [price, qty] of currentBids) {
+          if (price >= bidThreshold && price <= bestBid) {
+            bidVolume += qty;
+          }
+        }
+
+        let askVolume = 0;
+        for (const [price, qty] of currentAsks) {
+          if (price >= bestAsk && price <= askThreshold) {
+            askVolume += qty;
+          }
+        }
+
+        bidVolumeEl.textContent = formatVolume(bidVolume);
+        askVolumeEl.textContent = formatVolume(askVolume);
+        const imbalance = bidVolume - askVolume;
+        imbalanceEl.textContent = formatVolume(imbalance);
+        imbalanceEl.style.color = imbalance > 0 ? '#2ebd85' : (imbalance < 0 ? '#f6465d' : '#eaecef');
+      }
+
+      // Получение полного снимка стакана через REST API
+      async function fetchSnapshot() {
         try {
-          if (!data || !data.bids || !data.asks) {
-            log('Некорректные данные (ожидались bids/asks): ' + JSON.stringify(data).slice(0, 100));
-            return;
+          log('Получение снимка стакана через REST API...');
+          const response = await fetch(REST_SNAPSHOT_URL);
+          const data = await response.json();
+          
+          if (!data.bids || !data.asks) {
+            throw new Error('Некорректный формат снимка');
           }
 
-          const bids = data.bids;
-          const asks = data.asks;
+          lastUpdateId = data.lastUpdateId;
+          
+          // Очищаем и заполняем стакан
+          currentBids.clear();
+          currentAsks.clear();
+          
+          data.bids.forEach(([price, qty]) => {
+            currentBids.set(parseFloat(price), parseFloat(qty));
+          });
+          
+          data.asks.forEach(([price, qty]) => {
+            currentAsks.set(parseFloat(price), parseFloat(qty));
+          });
 
-          if (bids.length === 0 || asks.length === 0) {
-            showError('Пустой стакан');
-            log('Пустой стакан');
-            return;
-          }
-
-          const bestBid = parseFloat(bids[0][0]);
-          const bestAsk = parseFloat(asks[0][0]);
-
-          // Границы диапазона ±30%
-          const bidThreshold = bestBid * (1 - DEPTH_PERCENT / 100);
-          const askThreshold = bestAsk * (1 + DEPTH_PERCENT / 100);
-
-          let bidVolume = 0;
-          for (const [price, qty] of bids) {
-            const p = parseFloat(price);
-            if (p >= bidThreshold && p <= bestBid) {
-              bidVolume += parseFloat(qty);
-            } else if (p < bidThreshold) {
-              break; // дальше цены ещё ниже, не входят
-            }
-          }
-
-          let askVolume = 0;
-          for (const [price, qty] of asks) {
-            const p = parseFloat(price);
-            if (p >= bestAsk && p <= askThreshold) {
-              askVolume += parseFloat(qty);
-            } else if (p > askThreshold) {
-              break; // дальше цены выше, не входят
-            }
-          }
-
-          // Обновляем UI
-          bidVolumeEl.textContent = formatVolume(bidVolume);
-          askVolumeEl.textContent = formatVolume(askVolume);
-          const imbalance = bidVolume - askVolume;
-          imbalanceEl.textContent = formatVolume(imbalance);
-
-          if (imbalance > 0) {
-            imbalanceEl.style.color = '#2ebd85';
-          } else if (imbalance < 0) {
-            imbalanceEl.style.color = '#f6465d';
-          } else {
-            imbalanceEl.style.color = '#eaecef';
-          }
-
+          updateDisplay();
+          setStatus('');
+          log('Снимок стакана загружен. LastUpdateId: ' + lastUpdateId);
           showError('');
-          setStatus(''); // connected
-          log('Данные обновлены успешно');
         } catch (e) {
-          showError('Ошибка обработки данных: ' + e.message);
+          showError('Ошибка загрузки снимка: ' + e.message);
           log('Ошибка: ' + e.message);
+          // Повторная попытка через 5 секунд
+          setTimeout(fetchSnapshot, 5000);
         }
       }
 
-      let ws;
-      function connect() {
-        if (ws) {
-          ws.close();
+      // Применение дельта-обновлений из WebSocket
+      function applyDepthUpdate(data) {
+        if (!lastUpdateId) return; // Ещё нет снимка
+
+        const U = data.U; // First update ID
+        const u = data.u; // Final update ID
+        const b = data.b || []; // Bids updates
+        const a = data.a || []; // Asks updates
+
+        // Проверка на синхронизацию
+        if (u < lastUpdateId) {
+          // Устаревшее обновление, пропускаем
+          return;
         }
-        setStatus('connecting');
-        showError('');
-        log('Подключение к ' + STREAM_URL);
 
-        ws = new WebSocket(STREAM_URL);
+        if (U > lastUpdateId + 1) {
+          // Потеря данных, нужна ресинхронизация
+          log('Обнаружена потеря данных. Ресинхронизация...');
+          fetchSnapshot();
+          return;
+        }
 
-        ws.onopen = () => {
-          log('Соединение установлено, ожидание данных...');
-        };
+        // Применяем обновления
+        b.forEach(([price, qty]) => {
+          const p = parseFloat(price);
+          const q = parseFloat(qty);
+          if (q === 0) {
+            currentBids.delete(p);
+          } else {
+            currentBids.set(p, q);
+          }
+        });
 
-        ws.onmessage = (event) => {
+        a.forEach(([price, qty]) => {
+          const p = parseFloat(price);
+          const q = parseFloat(qty);
+          if (q === 0) {
+            currentAsks.delete(p);
+          } else {
+            currentAsks.set(p, q);
+          }
+        });
+
+        lastUpdateId = u;
+        updateDisplay();
+      }
+
+      // Инициализация WebSocket соединений
+      function initWebSockets() {
+        // Поток обновлений стакана (дельта)
+        const depthWs = new WebSocket(WS_DEPTH_STREAM);
+        
+        depthWs.onmessage = (event) => {
           try {
             const msg = JSON.parse(event.data);
-            processOrderBook(msg);
-          } catch (err) {
-            log('Ошибка парсинга JSON: ' + err.message);
+            if (msg.e === 'depthUpdate') {
+              applyDepthUpdate(msg);
+            }
+          } catch (e) {
+            log('Ошибка обработки depthUpdate: ' + e.message);
           }
         };
 
-        ws.onerror = (err) => {
-          log('Ошибка WebSocket');
-          console.error('WebSocket error', err);
-          showError('Ошибка соединения с Binance');
+        depthWs.onerror = () => {
+          log('Ошибка WebSocket depth');
           setStatus('disconnected');
         };
 
-        ws.onclose = (event) => {
-          log('Соединение закрыто (код ' + event.code + ', причина: ' + (event.reason || 'нет') + '). Переподключение через 3с...');
+        depthWs.onclose = () => {
+          log('Depth WebSocket закрыт. Переподключение...');
           setStatus('disconnected');
-          ws = null;
-          setTimeout(connect, 3000);
+          setTimeout(initWebSockets, 3000);
+        };
+
+        // Дополнительный поток тикера для мгновенного отображения лучшей цены
+        const tickerWs = new WebSocket(WS_TICKER_STREAM);
+        
+        tickerWs.onmessage = (event) => {
+          try {
+            const msg = JSON.parse(event.data);
+            if (msg.e === '24hrTicker') {
+              // Можно использовать для дополнительной информации
+              // Например, отображать процент изменения
+            }
+          } catch (e) {
+            // Игнорируем ошибки парсинга тикера
+          }
         };
       }
 
-      connect();
+      // Запуск
+      fetchSnapshot();
+      initWebSockets();
+      setStatus('connecting');
     })();
   </script>
 </body>
